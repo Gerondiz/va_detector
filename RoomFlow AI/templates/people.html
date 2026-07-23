@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="margin-bottom:20px">
+    <div class="grid grid-3">
+        <div class="stat enter"><div class="number" id="stat-enter">0</div><div class="label">Total Entered</div></div>
+        <div class="stat exit"><div class="number" id="stat-exit">0</div><div class="label">Total Exited</div></div>
+        <div class="stat now"><div class="number" id="stat-now">0</div><div class="label">Unique Persons</div></div>
+    </div>
+</div>
+<div class="card" style="margin-bottom:20px">
+    <strong>Known People</strong>
+    <div style="margin-top:10px">
+        <table>
+            <thead><tr><th>Name</th><th>Entries</th><th>Exits</th><th>Last Seen</th><th>Action</th></tr></thead>
+            <tbody id="people-table"></tbody>
+        </table>
+    </div>
+</div>
+<div class="card">
+    <div style="display:flex; justify-content:space-between; margin-bottom:15px">
+        <strong>Screenshots</strong>
+        <button onclick="loadScreenshots()">Refresh</button>
+    </div>
+    <div class="screenshots" id="screenshots"></div>
+</div>
+<div class="modal" id="modal" onclick="this.classList.remove('show')">
+    <img id="modal-img">
+</div>
+<script>
+function loadPeople() {
+    fetch('/api/people').then(r=>r.json()).then(d=>{
+        const tbody = document.getElementById('people-table');
+        tbody.innerHTML = d.people.map(p => {
+            const faceImg = p.face_images && p.face_images.length > 0
+                ? '<img src="/face_images/' + p.face_images[p.face_images.length-1] + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;margin-right:8px;vertical-align:middle">'
+                : '';
+            return '<tr>' +
+                '<td>' + faceImg + '<span class="person-name" data-id="' + p.id + '">' + p.name + '</span></td>' +
+                '<td>' + p.entries + '</td>' +
+                '<td>' + p.exits + '</td>' +
+                '<td>' + (p.last_seen || '') + '</td>' +
+                '<td><button onclick="renamePerson(' + p.id + ')" style="font-size:12px;padding:2px 8px">Rename</button></td>' +
+                '</tr>';
+        }).join('');
+        document.getElementById('stat-now').textContent = d.people.length;
+    });
+}
+function renamePerson(id) {
+    const span = document.querySelector('.person-name[data-id="' + id + '"]');
+    const currentName = span.textContent;
+    const newName = prompt('New name for ' + currentName + ':', currentName);
+    if (newName && newName !== currentName) {
+        fetch('/api/people/rename', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({person_id: id, name: newName})
+        }).then(r=>r.json()).then(() => loadPeople());
+    }
+}
+function loadData() {
+    fetch('/api/status').then(r=>r.json()).then(d=>{
+        document.getElementById('stat-enter').textContent = d.entered;
+        document.getElementById('stat-exit').textContent = d.exited;
+    });
+}
+function loadScreenshots() {
+    fetch('/api/screenshots').then(r=>r.json()).then(files=>{
+        const container = document.getElementById('screenshots');
+        container.innerHTML = files.filter(f => f.includes('person_')).map(f =>
+            '<img src="/screenshots/' + f + '" onclick="document.getElementById(\'modal-img\').src=\'/screenshots/' + f + '\';document.getElementById(\'modal\').classList.add(\'show\')">'
+        ).join('');
+    });
+}
+loadData();
+loadPeople();
+loadScreenshots();
+setInterval(loadData, 5000);
+setInterval(loadPeople, 10000);
+</script>
+{% endblock %}

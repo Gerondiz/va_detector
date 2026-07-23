@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+
+logs/
+person_db.json
+settings.json
+*.log
+
+yolov8n.pt
+
+study_project/
+
+.DS_Store
+Thumbs.db

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <div style="display:flex; justify-content:space-between; margin-bottom:15px">
+        <strong>Event Log</strong>
+        <div>
+            <button onclick="location.reload()">Refresh</button>
+        </div>
+    </div>
+    <div class="logs-table-wrap">
+        <table><thead><tr><th>Time</th><th>Type</th><th>Details</th></tr></thead>
+        <tbody id="log-table"></tbody></table>
+    </div>
+</div>
+<script>
+function loadLogs() {
+    fetch('/api/logs').then(r=>r.json()).then(logs=>{
+        const tbody = document.getElementById('log-table');
+        tbody.innerHTML = logs.reverse().map(e => {
+            const cls = e.classification || e.data?.classification || e.type;
+            let badge = `<span class="badge ${cls}">${e.type}</span>`;
+            let detail = JSON.stringify(e.data || '');
+            if (e.type === 'screenshot') {
+                detail = `<a href="/screenshots/${e.data.path.split('/').pop()}" target="_blank">📷 ${e.data.path}</a>`;
+            } else if (e.type === 'person_entered' || e.type === 'person_exited') {
+                detail = `Person #${e.data.id}`;
+            } else if (e.type === 'llm_analysis') {
+                const d = e.data;
+                badge = `<span class="badge ${d.classification}">${d.classification}</span>`;
+                detail = `${d.reason}`;
+            } else if (e.type === 'asr') {
+                detail = `"${e.data.text}"`;
+            }
+            return `<tr><td>${e.timestamp}</td><td>${badge}</td><td>${detail}</td></tr>`;
+        }).join('');
+    });
+}
+loadLogs();
+setInterval(loadLogs, 5000);
+</script>
+{% endblock %}

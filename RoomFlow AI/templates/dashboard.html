@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid grid-2">
+    <div class="vid-wrap">
+        <img src="/video" id="live-video" alt="Live">
+    </div>
+    <div class="flex" style="flex-direction:column; gap:20px">
+        <div class="card">
+            <div class="grid grid-3">
+                <div class="stat enter"><div class="number" id="stat-enter">0</div><div class="label">Entered</div></div>
+                <div class="stat exit"><div class="number" id="stat-exit">0</div><div class="label">Exited</div></div>
+                <div class="stat now"><div class="number" id="stat-now">0</div><div class="label">Inside</div></div>
+            </div>
+        </div>
+        <div class="card" style="flex:1; min-height:0">
+            <div style="display:flex; justify-content:space-between; margin-bottom:10px">
+                <strong>Recent Events</strong>
+                <span id="fps" style="color:#8a9bb5;font-size:12px">FPS: 0</span>
+            </div>
+            <div class="events-box" id="events-box"></div>
+        </div>
+    </div>
+</div>
+<div class="card" style="margin-top:20px">
+    <div style="display:flex; justify-content:space-between; margin-bottom:10px">
+        <strong>Person Crossings (last 20)</strong>
+    </div>
+    <div style="max-height:250px; overflow-y:auto">
+        <table><thead><tr><th>Time</th><th>Person</th><th>Direction</th><th>Visits</th></tr></thead>
+        <tbody id="person-table"></tbody></table>
+    </div>
+</div>
+<script>
+function update() {
+    fetch('/api/status').then(r=>r.json()).then(d=>{
+        document.getElementById('stat-enter').textContent = d.entered;
+        document.getElementById('stat-exit').textContent = d.exited;
+        document.getElementById('stat-now').textContent = d.current;
+        document.getElementById('fps').textContent = 'FPS: ' + d.fps;
+    });
+    fetch('/api/person_events').then(r=>r.json()).then(events=>{
+        const tbody = document.getElementById('person-table');
+        tbody.innerHTML = events.slice(-20).reverse().map(e =>
+            `<tr><td>${e.time}</td><td>#${e.person_id}</td><td><span class="badge ${e.direction}">${e.direction}</span></td><td>${e.total_visits}</td></tr>`
+        ).join('');
+    });
+    fetch('/api/events').then(r=>r.json()).then(events=>{
+        const box = document.getElementById('events-box');
+        const wasAtTop = box.scrollTop <= 10;
+        box.innerHTML = events.reverse().map(e => `<div>${e}</div>`).join('');
+        if (wasAtTop) box.scrollTop = 0;
+    });
+}
+setInterval(update, 1000);
+update();
+</script>
+{% endblock %}

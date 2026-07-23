@@ -1,0 +1,10 @@
+opencv-python-headless
+ultralytics
+torch
+numpy
+requests
+faster-whisper
+fastapi
+uvicorn
+aiofiles
+jinja2

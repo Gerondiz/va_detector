@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:600px">
+    <strong>Settings</strong>
+    <form method="post" action="/settings" style="margin-top:15px">
+        <label>Camera IP</label>
+        <input name="camera_ip" value="{{ camera_ip }}" disabled>
+        <label>RTSP URL</label>
+        <input name="camera_url" value="{{ camera_url }}" disabled>
+        <label>YOLO Model</label>
+        <input name="yolo_model" value="{{ yolo_model }}" disabled>
+        <label>LLM Model</label>
+        <input name="llm_model" value="{{ llm_model }}" disabled>
+        <label>LLM Server URL</label>
+        <input name="llm_url" value="{{ llm_url }}" disabled>
+
+        <label>Detection Line Position</label>
+        <div style="display:flex; align-items:center; gap:12px">
+            <input name="line_position" value="{{ line_pos }}" step="0.01" type="range" min="0" max="1"
+                   oninput="updateLine(this.value)" style="flex:1">
+            <span id="line-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ line_pos }}</span>
+        </div>
+        <div style="font-size:12px;color:#8a9bb5;margin-top:4px">
+            0 = top of frame · 1 = bottom of frame · Person below line = "inside"
+        </div>
+
+        <hr style="border-color:#2a3a4e;margin:20px 0">
+
+        <label>Door Zone — Left Edge</label>
+        <div style="display:flex; align-items:center; gap:12px">
+            <input name="door_left" value="{{ door_left }}" step="0.01" type="range" min="0" max="1"
+                   oninput="updateDoorLeft(this.value)" style="flex:1">
+            <span id="door-left-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ door_left }}</span>
+        </div>
+
+        <label style="margin-top:12px">Door Zone — Right Edge</label>
+        <div style="display:flex; align-items:center; gap:12px">
+            <input name="door_right" value="{{ door_right }}" step="0.01" type="range" min="0" max="1"
+                   oninput="updateDoorRight(this.value)" style="flex:1">
+            <span id="door-right-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ door_right }}</span>
+        </div>
+        <div style="font-size:12px;color:#8a9bb5;margin-top:4px">
+            0 = left edge · 1 = right edge · Person center inside zone = door area
+        </div>
+
+        <hr style="border-color:#2a3a4e;margin:20px 0">
+
+        <label>Door Zone — Top Edge</label>
+        <div style="display:flex; align-items:center; gap:12px">
+            <input name="door_top" value="{{ door_top }}" step="0.01" type="range" min="0" max="1"
+                   oninput="updateDoorTop(this.value)" style="flex:1">
+            <span id="door-top-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ door_top }}</span>
+        </div>
+
+        <label style="margin-top:12px">Door Zone — Bottom Edge</label>
+        <div style="display:flex; align-items:center; gap:12px">
+            <input name="door_bottom" value="{{ door_bottom }}" step="0.01" type="range" min="0" max="1"
+                   oninput="updateDoorBottom(this.value)" style="flex:1">
+            <span id="door-bottom-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ door_bottom }}</span>
+        </div>
+        <div style="font-size:12px;color:#8a9bb5;margin-top:4px">
+            0 = top of frame · 1 = bottom of frame
+        </div>
+
+        <div style="margin-top:20px">
+            <button type="button" onclick="window.location.href='/'">Back to Dashboard</button>
+        </div>
+    </form>
+</div>
+<script>
+function updateLine(val) {
+    document.getElementById('line-val').textContent = parseFloat(val).toFixed(2);
+    fetch('/api/set_line', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({line_position: parseFloat(val)})
+    });
+}
+function updateDoor() {
+    var l = parseFloat(document.getElementById('door-left-val').textContent);
+    var r = parseFloat(document.getElementById('door-right-val').textContent);
+    var t = parseFloat(document.getElementById('door-top-val').textContent);
+    var b = parseFloat(document.getElementById('door-bottom-val').textContent);
+    fetch('/api/set_door_zone', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({door_left: l, door_right: r, door_top: t, door_bottom: b})
+    });
+}
+function updateDoorLeft(val) {
+    document.getElementById('door-left-val').textContent = parseFloat(val).toFixed(2);
+    updateDoor();
+}
+function updateDoorRight(val) {
+    document.getElementById('door-right-val').textContent = parseFloat(val).toFixed(2);
+    updateDoor();
+}
+function updateDoorTop(val) {
+    document.getElementById('door-top-val').textContent = parseFloat(val).toFixed(2);
+    updateDoor();
+}
+function updateDoorBottom(val) {
+    document.getElementById('door-bottom-val').textContent = parseFloat(val).toFixed(2);
+    updateDoor();
+}
+</script>
+{% endblock %}
