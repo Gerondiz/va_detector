@@ -89,16 +89,34 @@ class PersonDB:
             return best_id
         return None
 
-    def identify(self, face_img: np.ndarray, full_body_img: np.ndarray, track_id: int) -> int:
+    def _extract_face(self, body_img: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """Try to detect face inside body_img. Returns (face_crop, face_embedding) or (None, None)."""
         model = self._get_model()
-        face_emb = None
-        if model is not None:
-            try:
-                faces = model.get(face_img)
-            except Exception:
-                faces = []
-            if faces:
-                face_emb = faces[0].normed_embedding
+        if model is None:
+            return None, None
+        try:
+            faces = model.get(body_img)
+        except Exception:
+            faces = []
+        if faces:
+            x1, y1, x2, y2 = [int(v) for v in faces[0].bbox]
+            h, w = body_img.shape[:2]
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 > x1 and y2 > y1:
+                face_crop = body_img[y1:y2, x1:x2]
+                return face_crop, faces[0].normed_embedding
+        return None, None
+
+    def _upper_body_crop(self, img: np.ndarray) -> np.ndarray:
+        """Take upper 35% of the image (head/shoulders area)."""
+        h = img.shape[0]
+        return img[:max(1, int(h * 0.35)), :]
+
+    def identify(self, body_crop: np.ndarray, track_id: int) -> int:
+        face_crop, face_emb = self._extract_face(body_crop)
+
+        display_img = face_crop if face_crop is not None else self._upper_body_crop(body_crop)
 
         best_id = None
         best_score = -1
@@ -111,11 +129,11 @@ class PersonDB:
                         best_score = score
                         best_id = pid
             if best_id is not None and best_score >= 0.35:
-                return self._update_person(best_id, face_img, face_emb, full_body_img)
+                return self._update_person(best_id, display_img, face_emb, body_crop)
 
-        matched_by_hist = self._match_by_hist(full_body_img)
+        matched_by_hist = self._match_by_hist(body_crop)
         if matched_by_hist is not None:
-            return self._update_person(matched_by_hist, face_img, face_emb, full_body_img)
+            return self._update_person(matched_by_hist, display_img, face_emb, body_crop)
 
         pid = self.next_id
         self.next_id += 1
@@ -130,8 +148,8 @@ class PersonDB:
             "color_hist": [],
             "ai_description": "",
         }
-        self._save_face(pid, face_img, "first")
-        self._update_hist(pid, full_body_img)
+        self._save_face(pid, display_img, "first")
+        self._update_hist(pid, body_crop)
         if face_emb is not None:
             self.people[pid]["embeddings"] = [face_emb]
         self._save()
@@ -196,8 +214,8 @@ class PersonDB:
         try:
             cv2.imwrite(path, img)
             if person_id in self.people:
-                rel = os.path.relpath(path, os.path.dirname(DB_FILE))
-                self.people[person_id]["face_images"].append(rel)
+                fname = os.path.basename(path)
+                self.people[person_id]["face_images"].append(fname)
                 if len(self.people[person_id]["face_images"]) > 10:
                     self.people[person_id]["face_images"] = self.people[person_id]["face_images"][-10:]
         except Exception:

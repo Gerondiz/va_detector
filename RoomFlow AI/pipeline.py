@@ -262,7 +262,7 @@ class PeopleCounter:
                          max(0, x1i):min(frame.shape[1], x2i)]
             if crop.size == 0 or self.person_db is None:
                 return
-            pid = self.person_db.identify(crop, crop, oid)
+            pid = self.person_db.identify(crop, oid)
             self.tracked[oid]["person_id"] = pid
             if self.llm is not None:
                 desc = self.llm.describe_person(crop)

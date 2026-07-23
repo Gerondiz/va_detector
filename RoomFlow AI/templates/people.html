@@ -32,7 +32,7 @@ function loadPeople() {
         const tbody = document.getElementById('people-table');
         tbody.innerHTML = d.people.map(p => {
             const faceImg = p.face_images && p.face_images.length > 0
-                ? '<img src="/face_images/' + p.face_images[p.face_images.length-1] + '" style="width:40px;height:40px;border-radius:50%;object-fit:cover;margin-right:8px;vertical-align:middle">'
+                ? '<img src="/face_images/' + p.face_images[p.face_images.length-1] + '" onclick="event.stopPropagation();document.getElementById(\'modal-img\').src=\'/face_images/' + p.face_images[p.face_images.length-1] + '\';document.getElementById(\'modal\').classList.add(\'show\')" style="width:40px;height:40px;border-radius:50%;object-fit:cover;margin-right:8px;vertical-align:middle;cursor:pointer">'
                 : '';
             return '<tr>' +
                 '<td>' + faceImg + '<span class="person-name" data-id="' + p.id + '">' + p.name + '</span></td>' +
