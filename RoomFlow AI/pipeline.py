@@ -2,6 +2,7 @@ import cv2
 import time
 import os
 import json
+import queue
 import threading
 import traceback
 import numpy as np
@@ -121,14 +122,19 @@ class PeopleCounter:
         self.llm = llm
         self.tracked: dict[int, dict] = {}
         self.cooldown: dict[int, float] = {}
+        self._pos_cooldown: list[tuple[int, int, float]] = []
         self._recently_lost: dict[int, dict] = {}
         self._lost_cleanup_counter = 0
+        self._ai_queue: queue.Queue = queue.Queue()
+        if llm is not None:
+            t = threading.Thread(target=self._ai_worker, daemon=True)
+            t.start()
 
     def _match_lost_track(self, oid: int, x1, y1, x2, y2) -> int | None:
         cx = (x1 + x2) / 2
         cy = (y1 + y2) / 2
         best = None
-        best_dist = 200
+        best_dist = 300
         for lost_id, lost_info in self._recently_lost.items():
             lx1, ly1, lx2, ly2 = lost_info.get("lost_bbox", (0, 0, 0, 0))
             lcx = (lx1 + lx2) / 2
@@ -163,31 +169,32 @@ class PeopleCounter:
                     self.tracked[oid] = self._recently_lost.pop(matched)
                     self.tracked[oid]["prev_in_door"] = self.tracked[oid]["in_door"]
                     self.tracked[oid]["in_door"] = in_door
-                    self.tracked[oid]["first_in_door"] = self.tracked[oid].get("first_in_door", in_door)
-                    if not in_door:
-                        self.tracked[oid]["was_outside"] = True
                     if matched in self.tracked:
                         del self.tracked[matched]
                 else:
                     self.tracked[oid] = {"prev_in_door": in_door, "in_door": in_door,
                                           "exit_frame": None, "person_id": None,
-                                          "was_outside": not in_door,
-                                          "first_in_door": in_door}
+                                          "ever_in_door": in_door,
+                                          "entered_from_outside": False}
                     if in_door and self.person_db is not None:
                         self._identify_person(oid, frame, x1, y1, x2, y2)
                 d = self.tracked[oid]
             else:
                 d = self.tracked[oid]
                 was_in_door = d["in_door"]
-                if not in_door:
-                    d["was_outside"] = True
-                if was_in_door and not in_door and d.get("first_in_door"):
-                    if oid not in self.cooldown or now - self.cooldown[oid] >= 3:
+                if in_door:
+                    d["ever_in_door"] = True
+                    if not was_in_door:
+                        d["entered_from_outside"] = True
+                        d["exit_frame"] = annotated.copy()
+                        if self.person_db is not None and d.get("person_id") is None:
+                            self._identify_person(oid, frame, x1, y1, x2, y2)
+                if was_in_door and not in_door and d.get("entered_from_outside"):
+                    self._pos_cooldown = [(px, py, pt) for (px, py, pt) in self._pos_cooldown if now - pt < 10]
+                    too_soon = any(((cx - px) ** 2 + (cy - py) ** 2) ** 0.5 < 100 for (px, py, pt) in self._pos_cooldown)
+                    if not too_soon:
+                        self._pos_cooldown.append((int(cx), int(cy), now))
                         self._count(oid, "entered", frame, annotated, self.cooldown)
-                if not was_in_door and in_door:
-                    d["exit_frame"] = annotated.copy()
-                    if self.person_db is not None and d.get("person_id") is None:
-                        self._identify_person(oid, frame, x1, y1, x2, y2)
                 d["prev_in_door"] = was_in_door
                 d["in_door"] = in_door
 
@@ -227,13 +234,13 @@ class PeopleCounter:
         for lost_id in list(self._recently_lost.keys()):
             info = self._recently_lost[lost_id]
             elapsed = now - info.get("lost_time", 0)
-            if info.get("pending_exit") and elapsed > 0.2:
+            if info.get("pending_exit") and elapsed > 0.5:
                 info["pending_exit"] = False
                 exit_img = info.get("exit_img")
                 if exit_img is None:
                     exit_img = annotated
                 self._count(lost_id, "exited", exit_img, exit_img, self.cooldown)
-            if elapsed > 3.0:
+            if elapsed > 5.0:
                 del self._recently_lost[lost_id]
 
         self.state.current_people = 0
@@ -262,20 +269,33 @@ class PeopleCounter:
                          max(0, x1i):min(frame.shape[1], x2i)]
             if crop.size == 0 or self.person_db is None:
                 return
-            if self.person_db is None:
-                return
             pid = self.person_db.identify(crop, oid)
             self.tracked[oid]["person_id"] = pid
             if self.llm is not None:
-                desc = self.llm.describe_person(crop)
-                if desc and "error" not in desc.lower():
-                    resolved = self.person_db.resolve_with_ai(pid, desc)
-                    if resolved != pid:
-                        self.tracked[oid]["person_id"] = resolved
+                self._ai_queue.put((pid, crop))
         except Exception as e:
             with open("logs/pipeline_error.log", "a") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} _identify_person: {e}\n")
                 traceback.print_exc(file=f)
+
+    def _ai_worker(self):
+        while self.state.running:
+            try:
+                pid, crop = self._ai_queue.get(timeout=1)
+                if crop is None or crop.size == 0:
+                    continue
+                desc = self.llm.describe_person(crop)
+                if desc and "error" not in desc.lower():
+                    resolved = self.person_db.resolve_with_ai(pid, desc)
+                    if resolved != pid:
+                        for d in self.tracked.values():
+                            if d.get("person_id") == pid:
+                                d["person_id"] = resolved
+            except queue.Empty:
+                continue
+            except Exception as e:
+                with open("logs/pipeline_error.log", "a") as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} _ai_worker: {e}\n")
 
     def _person_name(self, oid: int) -> str:
         d = self.tracked.get(oid)

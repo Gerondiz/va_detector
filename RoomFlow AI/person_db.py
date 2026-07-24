@@ -141,7 +141,7 @@ class PersonDB:
         intersect = words1 & words2
         return len(intersect) / max(len(words1), len(words2))
 
-    def _match_by_description(self, ai_desc: str, threshold: float = 0.35) -> int | None:
+    def _match_by_description(self, ai_desc: str, threshold: float = 0.55) -> int | None:
         if not ai_desc:
             return None
         best_id = None
