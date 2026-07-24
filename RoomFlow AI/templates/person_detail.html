@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="margin-bottom:20px">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <h2 id="person-name" style="margin:0">Person</h2>
+        <button onclick="rename()" style="font-size:12px;padding:4px 12px">Rename</button>
+    </div>
+    <div class="grid grid-3" style="margin-top:15px">
+        <div class="stat enter"><div class="number" id="stat-entered">0</div><div class="label">Entries</div></div>
+        <div class="stat exit"><div class="number" id="stat-exited">0</div><div class="label">Exits</div></div>
+        <div class="stat now"><div class="number" id="stat-events">0</div><div class="label">Total Events</div></div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:20px">
+    <strong>AI Description</strong>
+    <p id="ai-desc" style="margin-top:8px; color:#aaa; font-size:14px"></p>
+</div>
+
+<div class="card">
+    <strong>Event Timeline</strong>
+    <div style="margin-top:10px">
+        <table>
+            <thead><tr><th>Time</th><th>Type</th><th>Screenshot</th></tr></thead>
+            <tbody id="events-table"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal" id="modal" onclick="this.classList.remove('show')">
+    <img id="modal-img">
+</div>
+
+<script>
+const personId = {{ person_id }};
+
+function loadPerson() {
+    fetch('/api/people/' + personId).then(r=>r.json()).then(p=>{
+        document.getElementById('person-name').textContent = p.name;
+        document.getElementById('stat-entered').textContent = p.entries;
+        document.getElementById('stat-exited').textContent = p.exits;
+        document.getElementById('stat-events').textContent = p.events.length;
+        document.getElementById('ai-desc').textContent = p.ai_description || 'No description yet';
+
+        const tbody = document.getElementById('events-table');
+        tbody.innerHTML = p.events.map(e => {
+            const imgHtml = e.screenshot
+                ? '<img src="/screenshots/' + e.screenshot + '" onclick="document.getElementById(\'modal-img\').src=\'/screenshots/' + e.screenshot + '\';document.getElementById(\'modal\').classList.add(\'show\')" style="height:50px;cursor:pointer;border-radius:4px">'
+                : '';
+            return '<tr>' +
+                '<td>' + e.timestamp + '</td>' +
+                '<td><span class="badge ' + e.type + '">' + e.type + '</span></td>' +
+                '<td>' + imgHtml + '</td>' +
+                '</tr>';
+        }).join('');
+    });
+}
+
+function rename() {
+    const name = prompt('New name:');
+    if (name) {
+        fetch('/api/people/rename', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({person_id: personId, name: name})
+        }).then(() => loadPerson());
+    }
+}
+
+loadPerson();
+</script>
+{% endblock %}

@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, Red
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pipeline import SharedState, CameraPipeline
-from person_db import PersonDB
+from database import PersonDB
 from config import CAMERA, MODELS
 
 state = SharedState()
@@ -53,6 +53,10 @@ async def logs_page(request: Request):
 @app.get("/people")
 async def people_page(request: Request):
     return templates.TemplateResponse(request, "people.html")
+
+@app.get("/people/{person_id}")
+async def person_detail(request: Request, person_id: int):
+    return templates.TemplateResponse(request, "person_detail.html", {"person_id": person_id})
 
 
 @app.get("/settings")
@@ -121,26 +125,22 @@ def api_person_events():
     return state.get_person_events(100)
 
 
-@app.get("/api/person_visits")
-def api_person_visits():
-    return [{"person_id": k, "visits": v} for k, v in state.person_visits.items()]
-
-
-@app.get("/api/logs")
-def api_logs():
-    log_file = BASE / "logs" / "events.jsonl"
-    if not log_file.exists():
-        return []
-    with open(log_file) as f:
-        return [json.loads(line) for line in f if line.strip()][-200:]
-
-
 @app.get("/api/people")
 def api_people():
     db = state.person_db
     if db is None:
         return {"people": []}
-    return {"people": db.get_all()}
+    return {"people": db.get_all_persons()}
+
+@app.get("/api/people/{person_id}")
+def api_person_detail(person_id: int):
+    db = state.person_db
+    if db is None:
+        return {"error": "no db"}
+    p = db.get_person(person_id)
+    if p is None:
+        return JSONResponse({"error": "not found"}, 404)
+    return p
 
 class RenameModel(BaseModel):
     person_id: int
