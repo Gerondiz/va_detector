@@ -1,5 +1,7 @@
 # RoomFlow AI
 
+*Проект в составе репозитория `va_detector`. Файлы проекта — в папке `RoomFlow AI/`.*
+
 Real-time people counting and AI‑based person re‑identification using a ceiling‑mounted camera pointed at a doorway.
 
 ## How it works
