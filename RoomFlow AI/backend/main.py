@@ -135,6 +135,17 @@ def api_status():
     }
 
 
+class SettingsModel(BaseModel):
+    key: str
+    value: str
+
+
+@app.post("/api/set_setting")
+def api_set_setting(data: SettingsModel):
+    set_setting(data.key, data.value)
+    return {"ok": True}
+
+
 @app.post("/api/reset_counters")
 def api_reset_counters():
     state.entered = 0

@@ -12,9 +12,15 @@
         <label>LLM Model</label>
         <input name="llm_model" value="{{ llm_model }}" disabled>
         <label>LLM Server URL</label>
-        <input name="llm_url" value="{{ llm_url }}" disabled>
+        <div style="display:flex; gap:8px">
+            <input name="llm_url" id="llm_url" value="{{ llm_url }}">
+            <button type="button" onclick="saveSetting('llm_url')" style="padding:10px 16px;white-space:nowrap">Save</button>
+        </div>
         <label>Vision Model</label>
-        <input name="vision_model" value="{{ vision_model }}" disabled>
+        <div style="display:flex; gap:8px">
+            <input name="vision_model" id="vision_model" value="{{ vision_model }}">
+            <button type="button" onclick="saveSetting('vision_model')" style="padding:10px 16px;white-space:nowrap">Save</button>
+        </div>
 
         <label>Door Zone — Left Edge</label>
         <div style="display:flex; align-items:center; gap:12px">
@@ -92,6 +98,16 @@ function updateDoorTop(val) {
 function updateDoorBottom(val) {
     document.getElementById('door-bottom-val').textContent = parseFloat(val).toFixed(2);
     updateDoor();
+}
+function saveSetting(key) {
+    const val = document.getElementById(key).value;
+    fetch('/api/set_setting', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: key, value: val})
+    }).then(r=>r.json()).then(d=> {
+        if (d.ok) alert('Saved');
+    });
 }
 function resetCounters() {
     if (!confirm('Reset entered/exited counters to 0?')) return;

@@ -16,7 +16,7 @@ MODELS = {
     "whisper": "base",
     "llm": {
         "provider": "ollama",
-        "base_url": "http://20.0.0.150:11434/v1",
+        "base_url": "http://127.0.0.1:11434/v1",
         "model": "gemma4:latest",
     },
     "vision": {

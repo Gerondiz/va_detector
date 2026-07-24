@@ -171,11 +171,11 @@ class PersonDB:
             if event["person_id"] is not None:
                 return event["person_id"]
 
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
                 (f"Person", f"Person — {ai_description[:200]}" if ai_description else ""),
             )
-            pid = conn.lastrowid
+            pid = cur.lastrowid
             conn.execute("UPDATE persons SET name = ? WHERE id = ?", (f"Person {pid}", pid))
             conn.execute("UPDATE events SET person_id = ?, ai_description = ? WHERE id = ?",
                          (pid, ai_description, event_id))
@@ -233,11 +233,11 @@ class PersonDB:
                 conn.close()
                 return event["person_id"] if event else 0
 
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
                 (f"Person", f"Person — {ai_description[:200]}" if ai_description else ""),
             )
-            pid = conn.lastrowid
+            pid = cur.lastrowid
             conn.execute("UPDATE persons SET name = ? WHERE id = ?", (f"Person {pid}", pid))
             conn.execute("UPDATE events SET person_id = ?, ai_description = ? WHERE id = ?",
                          (pid, ai_description, event_id))

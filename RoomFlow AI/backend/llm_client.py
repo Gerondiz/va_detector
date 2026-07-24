@@ -4,13 +4,23 @@ import base64
 import cv2
 import numpy as np
 from .config import MODELS
+from .database import get_setting
 
 
 class LLMAnalyzer:
     def __init__(self):
-        cfg = MODELS["llm"]
-        self.base_url = cfg["base_url"]
-        self._vision_model = MODELS.get("vision", {}).get("model", "moondream:latest")
+        self._base_url: str | None = None
+        self._vision_model: str | None = None
+
+    def _get_url(self) -> str:
+        if self._base_url is None:
+            self._base_url = get_setting("llm_url", MODELS["llm"]["base_url"])
+        return self._base_url
+
+    def _get_vision_model(self) -> str:
+        if self._vision_model is None:
+            self._vision_model = get_setting("vision_model", MODELS.get("vision", {}).get("model", "moondream:latest"))
+        return self._vision_model
 
     def identify_person(self, crop: np.ndarray, existing: list[dict]) -> dict:
         try:
@@ -38,9 +48,9 @@ class LLMAnalyzer:
             )
 
             resp = requests.post(
-                f"{self.base_url}/chat/completions",
+                f"{self._get_url()}/chat/completions",
                 json={
-                    "model": self._vision_model,
+                    "model": self._get_vision_model(),
                     "messages": [{
                         "role": "user",
                         "content": [
