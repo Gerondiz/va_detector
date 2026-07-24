@@ -177,6 +177,10 @@ class PeopleCounter:
                                 self._ai_queue.put((eid, crop))
                         self.state.add_event(
                             f"entered #{oid} (IN: {self.state.entered} OUT: {self.state.exited})")
+                        self.state.add_person_event({
+                            "time": time.strftime("%H:%M:%S"), "person_id": oid,
+                            "direction": "entered", "total_visits": self.state.entered,
+                        })
 
                 if not was_in_door and in_door:
                     d["exit_frame"] = annotated.copy()
@@ -227,6 +231,10 @@ class PeopleCounter:
                     self.db.save_exit_event(lost_id, pid, screenshot)
                 self.state.add_event(
                     f"exited #{lost_id} (IN: {self.state.entered} OUT: {self.state.exited})")
+                self.state.add_person_event({
+                    "time": time.strftime("%H:%M:%S"), "person_id": lost_id,
+                    "direction": "exited", "total_visits": self.state.exited,
+                })
             if elapsed > 5.0:
                 del self._recently_lost[lost_id]
 
