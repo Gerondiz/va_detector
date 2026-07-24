@@ -91,17 +91,9 @@ def init_db():
             created_at  TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
-        CREATE TABLE IF NOT EXISTS face_embeddings (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            person_id   INTEGER REFERENCES persons(id),
-            embedding   BLOB NOT NULL,
-            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-
         CREATE INDEX IF NOT EXISTS idx_events_person  ON events(person_id);
         CREATE INDEX IF NOT EXISTS idx_events_time    ON events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_faces_person   ON face_images(person_id);
-        CREATE INDEX IF NOT EXISTS idx_emb_person     ON face_embeddings(person_id);
 
         CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
@@ -115,43 +107,8 @@ def init_db():
 class PersonDB:
     def __init__(self):
         init_db()
-        self._face_model = None
 
-    # --- face model helpers ---
-
-    def _get_model(self):
-        if self._face_model is None:
-            try:
-                import insightface
-                self._face_model = insightface.app.FaceAnalysis(
-                    name="buffalo_sc", providers=["CPUExecutionProvider"]
-                )
-                self._face_model.prepare(ctx_id=-1)
-            except Exception:
-                self._face_model = False
-        return self._face_model if self._face_model is not False else None
-
-    def _extract_face(self, img: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None]:
-        model = self._get_model()
-        if model is None:
-            return None, None
-        try:
-            faces = model.get(img)
-        except Exception:
-            faces = []
-        if faces:
-            x1, y1, x2, y2 = [int(v) for v in faces[0].bbox]
-            h, w = img.shape[:2]
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(w, x2), min(h, y2)
-            if x2 > x1 and y2 > y1:
-                face_crop = img[y1:y2, x1:x2]
-                return face_crop, faces[0].normed_embedding
-        return None, None
-
-    def _upper_body_crop(self, img: np.ndarray) -> np.ndarray:
-        h = img.shape[0]
-        return img[:max(1, int(h * 0.35)), :]
+    # --- face / avatar helpers ---
 
     def _save_img(self, img: np.ndarray, prefix: str) -> str:
         os.makedirs(FACE_DIR, exist_ok=True)
@@ -204,30 +161,26 @@ class PersonDB:
         finally:
             conn.close()
 
-    def resolve_event(self, event_id: int, ai_description: str):
-        """Background: match description against known persons, assign person_id."""
+    def resolve_event(self, event_id: int, ai_description: str) -> int:
+        """Create a new person and assign the event. Returns person_id."""
         conn = get_conn()
         try:
             event = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
-            if event is None or event["person_id"] is not None:
-                return
+            if event is None:
+                return 0
+            if event["person_id"] is not None:
+                return event["person_id"]
 
-            matched_pid = None
-            if ai_description:
-                matched_pid = self._match_by_description(ai_description, conn)
-
-            if matched_pid is None:
-                conn.execute(
-                    "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
-                    (f"Person", f"Person — {ai_description[:100]}" if ai_description else ""),
-                )
-                matched_pid = conn.lastrowid
-                conn.execute("UPDATE persons SET name = ? WHERE id = ?",
-                             (f"Person {matched_pid}", matched_pid))
-
+            conn.execute(
+                "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
+                (f"Person", f"Person — {ai_description[:200]}" if ai_description else ""),
+            )
+            pid = conn.lastrowid
+            conn.execute("UPDATE persons SET name = ? WHERE id = ?", (f"Person {pid}", pid))
             conn.execute("UPDATE events SET person_id = ?, ai_description = ? WHERE id = ?",
-                         (matched_pid, ai_description, event_id))
+                         (pid, ai_description, event_id))
             conn.commit()
+            return pid
         finally:
             conn.close()
 
@@ -264,32 +217,34 @@ class PersonDB:
 
     # --- face embedding matching (fast, called during save_entry_event if model available) ---
 
-    def try_match_by_face(self, crop: np.ndarray) -> int | None:
-        """Try face embedding matching. Returns person_id or None."""
-        face_crop, face_emb = self._extract_face(crop)
-        if face_emb is None:
-            return None
+    def get_all_persons_with_descriptions(self) -> list[dict]:
         conn = get_conn()
         try:
-            rows = conn.execute("SELECT person_id, embedding FROM face_embeddings").fetchall()
-            for row in rows:
-                known = np.frombuffer(row["embedding"], dtype=np.float32)
-                if float(face_emb @ known) >= 0.35:
-                    return row["person_id"]
+            rows = conn.execute("SELECT id, name, ai_description FROM persons ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 
-        # No match but have face → save embedding
-        conn2 = get_conn()
+    def create_person_and_assign(self, event_id: int, ai_description: str) -> int:
+        conn = get_conn()
         try:
-            conn2.execute(
-                "INSERT INTO face_embeddings (person_id, embedding) VALUES (?, ?)",
-                (None, face_emb.tobytes()),
+            event = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            if event is None or event["person_id"] is not None:
+                conn.close()
+                return event["person_id"] if event else 0
+
+            conn.execute(
+                "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
+                (f"Person", f"Person — {ai_description[:200]}" if ai_description else ""),
             )
-            conn2.commit()
+            pid = conn.lastrowid
+            conn.execute("UPDATE persons SET name = ? WHERE id = ?", (f"Person {pid}", pid))
+            conn.execute("UPDATE events SET person_id = ?, ai_description = ? WHERE id = ?",
+                         (pid, ai_description, event_id))
+            conn.commit()
+            return pid
         finally:
-            conn2.close()
-        return None
+            conn.close()
 
     # --- person queries (called from server) ---
 

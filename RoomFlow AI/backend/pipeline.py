@@ -245,22 +245,22 @@ class PeopleCounter:
                 if crop is None or crop.size == 0:
                     continue
 
-                face_pid = self.db.try_match_by_face(crop) if self.db else None
-                if face_pid is not None:
-                    if self.db:
-                        self.db.assign_event(event_id, face_pid)
-                        self.db.add_face_image(face_pid, crop)
+                existing = self.db.get_all_persons_with_descriptions() if self.db else []
+                result = self.llm.identify_person(crop, existing)
+                pid = result.get("person_id", 0)
+                desc = result.get("description", "")
+
+                if pid > 0 and self.db:
+                    self.db.assign_event(event_id, pid)
+                    self.db.add_face_image(pid, crop)
                     for d in self.tracked.values():
                         if d.get("event_id") == event_id:
-                            d["person_id"] = face_pid
+                            d["person_id"] = pid
                             break
-                    continue
-
-                desc = self.llm.describe_person(crop)
-                if desc and "error" not in desc.lower():
-                    self.db.resolve_event(event_id, desc)
                 else:
-                    self.db.resolve_event(event_id, "")
+                    pid = self.db.resolve_event(event_id, desc)
+                    if pid and crop is not None:
+                        self.db.add_face_image(pid, crop)
             except queue.Empty:
                 continue
             except Exception as e:
