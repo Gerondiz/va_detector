@@ -13,18 +13,8 @@
         <input name="llm_model" value="{{ llm_model }}" disabled>
         <label>LLM Server URL</label>
         <input name="llm_url" value="{{ llm_url }}" disabled>
-
-        <label>Detection Line Position</label>
-        <div style="display:flex; align-items:center; gap:12px">
-            <input name="line_position" value="{{ line_pos }}" step="0.01" type="range" min="0" max="1"
-                   oninput="updateLine(this.value)" style="flex:1">
-            <span id="line-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ line_pos }}</span>
-        </div>
-        <div style="font-size:12px;color:#8a9bb5;margin-top:4px">
-            0 = top of frame · 1 = bottom of frame · Person below line = "inside"
-        </div>
-
-        <hr style="border-color:#2a3a4e;margin:20px 0">
+        <label>Vision Model</label>
+        <input name="vision_model" value="{{ vision_model }}" disabled>
 
         <label>Door Zone — Left Edge</label>
         <div style="display:flex; align-items:center; gap:12px">
@@ -62,20 +52,20 @@
             0 = top of frame · 1 = bottom of frame
         </div>
 
+        <hr style="border-color:#2a3a4e;margin:20px 0">
+        <label>Counters</label>
+        <div style="display:flex; gap:12px; align-items:center; margin-top:8px">
+            <span>Entered: <b id="cnt-entered">{{ entered }}</b></span>
+            <span>Exited: <b id="cnt-exited">{{ exited }}</b></span>
+            <button type="button" onclick="resetCounters()" style="background:#d32f2f">Reset</button>
+        </div>
+
         <div style="margin-top:20px">
             <button type="button" onclick="window.location.href='/'">Back to Dashboard</button>
         </div>
     </form>
 </div>
 <script>
-function updateLine(val) {
-    document.getElementById('line-val').textContent = parseFloat(val).toFixed(2);
-    fetch('/api/set_line', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({line_position: parseFloat(val)})
-    });
-}
 function updateDoor() {
     var l = parseFloat(document.getElementById('door-left-val').textContent);
     var r = parseFloat(document.getElementById('door-right-val').textContent);
@@ -102,6 +92,15 @@ function updateDoorTop(val) {
 function updateDoorBottom(val) {
     document.getElementById('door-bottom-val').textContent = parseFloat(val).toFixed(2);
     updateDoor();
+}
+function resetCounters() {
+    if (!confirm('Reset entered/exited counters to 0?')) return;
+    fetch('/api/reset_counters', {method: 'POST'}).then(r => r.json()).then(d => {
+        if (d.ok) {
+            document.getElementById('cnt-entered').textContent = '0';
+            document.getElementById('cnt-exited').textContent = '0';
+        }
+    });
 }
 </script>
 {% endblock %}

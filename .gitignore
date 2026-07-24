@@ -5,9 +5,13 @@ __pycache__/
 logs/
 person_db.json
 settings.json
+settings.json.migrated
 *.log
+data.db
+data.db-wal
+data.db-shm
 
-yolov8n.pt
+*.pt
 
 study_project/
 

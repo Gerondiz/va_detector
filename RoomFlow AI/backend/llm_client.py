@@ -4,7 +4,7 @@ import threading
 import base64
 import cv2
 import numpy as np
-from config import MODELS
+from .config import MODELS
 
 SYSTEM_PROMPT = """Ты — система анализа событий безопасности. Классифицируй ситуацию по описанию кадра и распознанной речи. Отвечай строго в JSON: {"classification": "safe|threat|uncertain", "reason": "...", "action": "..."}"""
 

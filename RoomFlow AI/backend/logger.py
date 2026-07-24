@@ -1,7 +1,7 @@
 import json
 import time
 import os
-from config import LOGS
+from .config import LOGS
 
 
 class EventLogger:

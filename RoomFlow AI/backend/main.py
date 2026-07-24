@@ -3,19 +3,37 @@ import json
 import time
 import os
 from pathlib import Path
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pipeline import SharedState, CameraPipeline
-from database import PersonDB
-from config import CAMERA, MODELS
+from .pipeline import SharedState, CameraPipeline
+from .database import PersonDB, set_setting
+from .config import CAMERA, MODELS
 
 state = SharedState()
-app = FastAPI(title="VA Detector")
-BASE = Path(__file__).parent
+app = FastAPI(title="RoomFlow AI")
+
+BASE = Path(__file__).resolve().parent.parent
+
+# Migrate settings from old settings.json if present
+_settings_json = BASE / "settings.json"
+if _settings_json.exists():
+    try:
+        with open(_settings_json) as _f:
+            _old = json.load(_f)
+        from .database import set_setting
+        for _k in ("door_left", "door_right", "door_top", "door_bottom", "entered", "exited"):
+            if _k in _old:
+                set_setting(_k, str(_old[_k]))
+        os.rename(_settings_json, _settings_json.with_suffix(".json.migrated"))
+    except Exception:
+        pass
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+
+if (BASE / "static").exists():
+    app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
 
 def gen_mjpeg():
@@ -24,6 +42,8 @@ def gen_mjpeg():
         if frame is None:
             time.sleep(0.03)
             continue
+        if time.time() - state.last_frame_time > 3.0:
+            break
         _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n")
         time.sleep(0.03)
@@ -54,9 +74,11 @@ async def logs_page(request: Request):
 async def people_page(request: Request):
     return templates.TemplateResponse(request, "people.html")
 
+
 @app.get("/people/{person_id}")
 async def person_detail(request: Request, person_id: int):
-    return templates.TemplateResponse(request, "person_detail.html", {"person_id": person_id})
+    return templates.TemplateResponse(request, "person_detail.html",
+                                      {"person_id": person_id})
 
 
 @app.get("/settings")
@@ -67,7 +89,9 @@ async def settings_page(request: Request):
         "yolo_model": MODELS["yolo"],
         "llm_model": MODELS["llm"]["model"],
         "llm_url": MODELS["llm"]["base_url"],
-        "line_pos": state.line_position,
+        "vision_model": MODELS["vision"]["model"],
+        "entered": state.entered,
+        "exited": state.exited,
         "door_left": state.door_left,
         "door_right": state.door_right,
         "door_top": state.door_top,
@@ -77,16 +101,9 @@ async def settings_page(request: Request):
 
 @app.get("/video")
 def video():
-    return StreamingResponse(gen_mjpeg(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(gen_mjpeg(),
+                             media_type="multipart/x-mixed-replace; boundary=frame")
 
-
-class LineModel(BaseModel):
-    line_position: float
-
-@app.post("/api/set_line")
-def api_set_line(data: LineModel):
-    state.set_line_position(data.line_position)
-    return {"ok": True, "line_position": state.line_position}
 
 class DoorZoneModel(BaseModel):
     door_left: float
@@ -94,11 +111,15 @@ class DoorZoneModel(BaseModel):
     door_top: float = 0.0
     door_bottom: float = 1.0
 
+
 @app.post("/api/set_door_zone")
 def api_set_door_zone(data: DoorZoneModel):
-    state.set_door_zone(data.door_left, data.door_right, data.door_top, data.door_bottom)
-    return {"ok": True, "door_left": state.door_left, "door_right": state.door_right,
+    state.set_door_zone(data.door_left, data.door_right,
+                        data.door_top, data.door_bottom)
+    return {"ok": True, "door_left": state.door_left,
+            "door_right": state.door_right,
             "door_top": state.door_top, "door_bottom": state.door_bottom}
+
 
 @app.get("/api/status")
 def api_status():
@@ -107,12 +128,20 @@ def api_status():
         "exited": state.exited,
         "current": state.current_people,
         "fps": state.fps,
-        "line_position": state.line_position,
         "door_left": state.door_left,
         "door_right": state.door_right,
         "door_top": state.door_top,
         "door_bottom": state.door_bottom,
     }
+
+
+@app.post("/api/reset_counters")
+def api_reset_counters():
+    state.entered = 0
+    state.exited = 0
+    set_setting("entered", "0")
+    set_setting("exited", "0")
+    return {"ok": True}
 
 
 @app.get("/api/events")
@@ -132,6 +161,7 @@ def api_people():
         return {"people": []}
     return {"people": db.get_all_persons()}
 
+
 @app.get("/api/people/{person_id}")
 def api_person_detail(person_id: int):
     db = state.person_db
@@ -142,9 +172,11 @@ def api_person_detail(person_id: int):
         return JSONResponse({"error": "not found"}, 404)
     return p
 
+
 class RenameModel(BaseModel):
     person_id: int
     name: str
+
 
 @app.post("/api/people/rename")
 def api_people_rename(data: RenameModel):
@@ -152,6 +184,7 @@ def api_people_rename(data: RenameModel):
     if db is not None:
         db.rename(data.person_id, data.name)
     return {"ok": True}
+
 
 @app.get("/api/screenshots")
 def api_screenshots():
@@ -167,12 +200,10 @@ def serve_screenshot(filename: str):
         return JSONResponse({"error": "not found"}, 404)
     return FileResponse(path, media_type="image/jpeg")
 
+
 @app.get("/face_images/{path:path}")
 def serve_face_image(path: str):
     full = BASE / "logs" / "faces" / path
     if not full.exists():
         return JSONResponse({"error": "not found"}, 404)
     return FileResponse(full, media_type="image/jpeg")
-
-
-

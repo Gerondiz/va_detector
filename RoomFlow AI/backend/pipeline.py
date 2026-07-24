@@ -1,44 +1,19 @@
 import cv2
 import time
 import os
-import json
+
 import queue
 import threading
 import traceback
 import numpy as np
 from dataclasses import dataclass, field
-from config import CAMERA, LOGS, MODELS
-from detector import Detector
-from llm_client import LLMAnalyzer
-from logger import EventLogger
-from database import PersonDB
+from .config import CAMERA, LOGS, MODELS
+from .detector import Detector
+from .llm_client import LLMAnalyzer
+from .logger import EventLogger
+from .database import PersonDB
 
-SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "settings.json")
-
-
-
-def _load_settings() -> dict:
-    try:
-        with open(SETTINGS_FILE) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-
-def _save_settings(data: dict):
-    existing = _load_settings()
-    existing.update(data)
-    tmp = SETTINGS_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(existing, f, indent=2)
-    os.replace(tmp, SETTINGS_FILE)
-
-
-def _settings_defaults():
-    s = _load_settings()
-    s.setdefault("door_left", 0.3)
-    s.setdefault("door_right", 0.7)
-    return s
+from .database import get_setting, set_setting
 
 @dataclass
 class SharedState:
@@ -50,27 +25,27 @@ class SharedState:
     person_events: list = field(default_factory=list)
     recent_events: list = field(default_factory=list)
     running: bool = True
-    line_position: float = field(default_factory=lambda: _load_settings().get("line_position", 0.7))
     door_left: float = 0.3
     door_right: float = 0.7
     door_top: float = 0.0
     door_bottom: float = 1.0
     fps: int = 0
     person_db: PersonDB | None = None
+    last_frame_time: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self):
-        s = _load_settings()
-        self.entered = s.get("entered", 0)
-        self.exited = s.get("exited", 0)
-        self.door_left = s.get("door_left", 0.3)
-        self.door_right = s.get("door_right", 0.7)
-        self.door_top = s.get("door_top", 0.0)
-        self.door_bottom = s.get("door_bottom", 1.0)
+        self.door_left = float(get_setting("door_left", "0.3"))
+        self.door_right = float(get_setting("door_right", "0.7"))
+        self.door_top = float(get_setting("door_top", "0.0"))
+        self.door_bottom = float(get_setting("door_bottom", "1.0"))
+        self.entered = int(get_setting("entered", "0"))
+        self.exited = int(get_setting("exited", "0"))
 
     def update_frame(self, f: np.ndarray):
         with self._lock:
             self.frame = f.copy()
+            self.last_frame_time = time.time()
 
     def get_frame(self):
         with self._lock:
@@ -94,10 +69,6 @@ class SharedState:
     def get_person_events(self, n: int = 50):
         return self.person_events[-n:]
 
-    def set_line_position(self, value: float):
-        self.line_position = max(0.0, min(1.0, value))
-        _save_settings({"line_position": self.line_position})
-
     def set_door_zone(self, left: float, right: float, top: float = 0.0, bottom: float = 1.0):
         self.door_left = max(0.0, min(1.0, left))
         self.door_right = max(0.0, min(1.0, right))
@@ -107,8 +78,10 @@ class SharedState:
             self.door_right = min(1.0, self.door_left + 0.1)
         if self.door_top >= self.door_bottom:
             self.door_bottom = min(1.0, self.door_top + 0.1)
-        _save_settings({"door_left": self.door_left, "door_right": self.door_right,
-                         "door_top": self.door_top, "door_bottom": self.door_bottom})
+        set_setting("door_left", str(self.door_left))
+        set_setting("door_right", str(self.door_right))
+        set_setting("door_top", str(self.door_top))
+        set_setting("door_bottom", str(self.door_bottom))
 
 
 
@@ -145,8 +118,12 @@ class PeopleCounter:
 
     def _save_crossing(self, oid: int, direction: str, frame: np.ndarray):
         ts = time.strftime("%Y%m%d_%H%M%S")
-        path = f"logs/person_{oid}_{direction}_{ts}.jpg"
-        cv2.imwrite(path, frame)
+        os.makedirs(LOGS["dir"], exist_ok=True)
+        path = os.path.join(LOGS["dir"], f"person_{oid}_{direction}_{ts}.jpg")
+        success = cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not success:
+            self.state.add_event(f"FAILED to save screenshot {path}")
+            return ""
         return f"person_{oid}_{direction}_{ts}.jpg"
 
     def update(self, objects: list[dict], frame: np.ndarray, annotated: np.ndarray):
@@ -165,7 +142,7 @@ class PeopleCounter:
             x1, y1, x2, y2 = o["bbox"]
             cx = (x1 + x2) / 2
             cy = (y1 + y2) / 2
-            in_door = door_x1 <= cx <= door_x2 and door_y1 <= cy <= door_y2
+            in_door = door_x1 <= cx <= door_x2 and door_y1 <= y2 <= door_y2
 
             if oid not in self.tracked:
                 matched = self._match_lost_track(oid, x1, y1, x2, y2)
@@ -189,7 +166,7 @@ class PeopleCounter:
                     if not too_soon:
                         self._pos_cooldown.append((int(cx), int(cy), now))
                         self.state.entered += 1
-                        _save_settings({"entered": self.state.entered})
+                        set_setting("entered", str(self.state.entered))
                         screenshot = self._save_crossing(oid, "entered", annotated)
                         if self.db is not None:
                             x1i, y1i, x2i, y2i = int(x1), int(y1), int(x2), int(y2)
@@ -232,7 +209,7 @@ class PeopleCounter:
                 in_door_prev = d.get("prev_in_door", False)
                 if in_door_now or in_door_prev:
                     self._recently_lost[oid]["pending_exit"] = True
-                    self._recently_lost[oid]["exit_img"] = d.get("exit_frame") or annotated
+                    self._recently_lost[oid]["exit_img"] = d.get("exit_frame") if d.get("exit_frame") is not None else annotated
                     self._recently_lost[oid]["person_id"] = d.get("person_id")
                 del self.tracked[oid]
 
@@ -242,8 +219,8 @@ class PeopleCounter:
             if info.get("pending_exit") and elapsed > 0.5:
                 info["pending_exit"] = False
                 self.state.exited += 1
-                _save_settings({"exited": self.state.exited})
-                exit_img = info.get("exit_img") or annotated
+                set_setting("exited", str(self.state.exited))
+                exit_img = info.get("exit_img") if info.get("exit_img") is not None else annotated
                 screenshot = self._save_crossing(lost_id, "exited", exit_img)
                 pid = info.get("person_id")
                 if self.db is not None:
@@ -270,9 +247,9 @@ class PeopleCounter:
 
                 face_pid = self.db.try_match_by_face(crop) if self.db else None
                 if face_pid is not None:
-                    self.db.resolve_event(event_id, "")
-                    self.db.add_face_image(face_pid, crop)
-                    pid_in_track = None
+                    if self.db:
+                        self.db.assign_event(event_id, face_pid)
+                        self.db.add_face_image(face_pid, crop)
                     for d in self.tracked.values():
                         if d.get("event_id") == event_id:
                             d["person_id"] = face_pid
@@ -282,6 +259,8 @@ class PeopleCounter:
                 desc = self.llm.describe_person(crop)
                 if desc and "error" not in desc.lower():
                     self.db.resolve_event(event_id, desc)
+                else:
+                    self.db.resolve_event(event_id, "")
             except queue.Empty:
                 continue
             except Exception as e:

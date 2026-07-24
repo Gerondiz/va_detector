@@ -4,8 +4,53 @@ import time
 import numpy as np
 import cv2
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "data.db")
-FACE_DIR = os.path.join(os.path.dirname(__file__), "logs", "faces")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(BASE_DIR, "data.db")
+FACE_DIR = os.path.join(BASE_DIR, "logs", "faces")
+
+SETTINGS_CACHE: dict[str, str] = {}
+_SETTINGS_DB_INIT = False
+
+
+def _ensure_settings_table():
+    global _SETTINGS_DB_INIT
+    if _SETTINGS_DB_INIT:
+        return
+    conn = get_conn()
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )""")
+        conn.commit()
+        _SETTINGS_DB_INIT = True
+    finally:
+        conn.close()
+
+
+def get_setting(key: str, default: str = "") -> str:
+    _ensure_settings_table()
+    if key in SETTINGS_CACHE:
+        return SETTINGS_CACHE[key]
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        val = row["value"] if row else default
+        SETTINGS_CACHE[key] = val
+        return val
+    finally:
+        conn.close()
+
+
+def set_setting(key: str, value: str):
+    _ensure_settings_table()
+    SETTINGS_CACHE[key] = value
+    conn = get_conn()
+    try:
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def get_conn() -> sqlite3.Connection:
@@ -48,7 +93,7 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS face_embeddings (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            person_id   INTEGER NOT NULL REFERENCES persons(id),
+            person_id   INTEGER REFERENCES persons(id),
             embedding   BLOB NOT NULL,
             created_at  TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -57,6 +102,11 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_events_time    ON events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_faces_person   ON face_images(person_id);
         CREATE INDEX IF NOT EXISTS idx_emb_person     ON face_embeddings(person_id);
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
     """)
     conn.commit()
     conn.close()
@@ -146,21 +196,30 @@ class PersonDB:
         finally:
             conn.close()
 
+    def assign_event(self, event_id: int, person_id: int):
+        conn = get_conn()
+        try:
+            conn.execute("UPDATE events SET person_id = ? WHERE id = ?", (person_id, event_id))
+            conn.commit()
+        finally:
+            conn.close()
+
     def resolve_event(self, event_id: int, ai_description: str):
         """Background: match description against known persons, assign person_id."""
-        if not ai_description:
-            return
         conn = get_conn()
         try:
             event = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
             if event is None or event["person_id"] is not None:
                 return
 
-            matched_pid = self._match_by_description(ai_description, conn)
+            matched_pid = None
+            if ai_description:
+                matched_pid = self._match_by_description(ai_description, conn)
+
             if matched_pid is None:
                 conn.execute(
                     "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
-                    (f"Person", f"Person — {ai_description[:100]}"),
+                    (f"Person", f"Person — {ai_description[:100]}" if ai_description else ""),
                 )
                 matched_pid = conn.lastrowid
                 conn.execute("UPDATE persons SET name = ? WHERE id = ?",
