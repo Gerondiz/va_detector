@@ -262,12 +262,16 @@ class PeopleCounter:
                          max(0, x1i):min(frame.shape[1], x2i)]
             if crop.size == 0 or self.person_db is None:
                 return
+            if self.person_db is None:
+                return
             pid = self.person_db.identify(crop, oid)
             self.tracked[oid]["person_id"] = pid
             if self.llm is not None:
                 desc = self.llm.describe_person(crop)
                 if desc and "error" not in desc.lower():
-                    self.person_db.set_description(pid, desc)
+                    resolved = self.person_db.resolve_with_ai(pid, desc)
+                    if resolved != pid:
+                        self.tracked[oid]["person_id"] = resolved
         except Exception as e:
             with open("logs/pipeline_error.log", "a") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} _identify_person: {e}\n")

@@ -39,6 +39,8 @@ class PersonDB:
                 info["embeddings"] = [np.array(e, dtype=np.float32) for e in emb_list]
                 hist_list = info.get("color_hist", [])
                 info["color_hist"] = [np.array(h, dtype=np.float32) for h in hist_list]
+                dc_list = info.get("dominant_colors", [])
+                info["dominant_colors"] = [[tuple(c) for c in group] for group in dc_list]
                 self.people[pid] = info
         except (FileNotFoundError, json.JSONDecodeError):
             self.people = {}
@@ -53,6 +55,7 @@ class PersonDB:
             entry = dict(info)
             entry["embeddings"] = [e.tolist() for e in entry.get("embeddings", [])]
             entry["color_hist"] = [h.tolist() for h in entry.get("color_hist", [])]
+            entry["dominant_colors"] = [[list(c) for c in group] for group in entry.get("dominant_colors", [])]
             data["people"][str(pid)] = entry
         with open(DB_FILE, "w") as f:
             json.dump(data, f, indent=2)
@@ -73,21 +76,113 @@ class PersonDB:
     def _hist_similarity(h1: np.ndarray, h2: np.ndarray) -> float:
         return float(cv2.compareHist(h1.reshape(30, 32), h2.reshape(30, 32), cv2.HISTCMP_CORREL))
 
-    def _match_by_hist(self, body_img: np.ndarray) -> int | None:
+    def _match_by_hist(self, body_img: np.ndarray) -> tuple[int | None, float]:
         hist = self._extract_color_hist(body_img)
         if hist is None:
-            return None
+            return None, 0.0
         best_id = None
-        best_score = -1
+        best_score = -1.0
         for pid, info in self.people.items():
             for known_hist in info.get("color_hist", []):
                 score = self._hist_similarity(hist, known_hist)
                 if score > best_score:
                     best_score = score
                     best_id = pid
-        if best_id is not None and best_score > 0.85:
+        return best_id, best_score
+
+    @staticmethod
+    def _extract_dominant_colors(img: np.ndarray, k: int = 3) -> list[tuple[int, int, int]]:
+        if img is None or img.size == 0:
+            return []
+        try:
+            h, w = img.shape[:2]
+            pixels = img.reshape(-1, 3)
+            if len(pixels) > 1000:
+                idx = np.random.choice(len(pixels), 1000, replace=False)
+                pixels = pixels[idx]
+            pixels = np.float32(pixels)
+            _, labels, centers = cv2.kmeans(pixels, k, None,
+                (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0), 10, cv2.KMEANS_RANDOM_CENTERS)
+            counts = np.bincount(labels.flatten())
+            ordered = [tuple(map(int, centers[i])) for i in np.argsort(-counts)]
+            return ordered
+        except Exception:
+            return []
+
+    @staticmethod
+    def _color_distance(c1: tuple[int, int, int], c2: tuple[int, int, int]) -> float:
+        return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
+
+    def _match_by_color(self, body_img: np.ndarray, threshold: float = 80.0) -> int | None:
+        colors = self._extract_dominant_colors(body_img)
+        if not colors:
+            return None
+        best_id = None
+        best_score = float("inf")
+        for pid, info in self.people.items():
+            for known_colors in info.get("dominant_colors", []):
+                total = sum(min(self._color_distance(c, kc) for kc in known_colors) for c in colors)
+                avg_dist = total / len(colors)
+                if avg_dist < best_score:
+                    best_score = avg_dist
+                    best_id = pid
+        if best_id is not None and best_score < threshold:
             return best_id
         return None
+
+    @staticmethod
+    def _description_similarity(desc1: str, desc2: str) -> float:
+        if not desc1 or not desc2:
+            return 0.0
+        words1 = set(w.lower() for w in desc1.split() if len(w) > 3)
+        words2 = set(w.lower() for w in desc2.split() if len(w) > 3)
+        if not words1 or not words2:
+            return 0.0
+        intersect = words1 & words2
+        return len(intersect) / max(len(words1), len(words2))
+
+    def _match_by_description(self, ai_desc: str, threshold: float = 0.35) -> int | None:
+        if not ai_desc:
+            return None
+        best_id = None
+        best_score = 0.0
+        for pid, info in self.people.items():
+            score = self._description_similarity(ai_desc, info.get("ai_description", ""))
+            if score > best_score:
+                best_score = score
+                best_id = pid
+        return best_id if best_score >= threshold else None
+
+    def resolve_with_ai(self, pid: int, ai_description: str) -> int:
+        """Called after AI description arrives. May merge pid into an existing person."""
+        if pid not in self.people:
+            return pid
+        if not ai_description:
+            return pid
+        existing = self._match_by_description(ai_description)
+        if existing is not None and existing != pid:
+            self._merge_persons(pid, existing)
+            return existing
+        self.people[pid]["ai_description"] = ai_description
+        self._save()
+        return pid
+
+    def _merge_persons(self, src_pid: int, dst_pid: int):
+        if src_pid not in self.people or dst_pid not in self.people:
+            return
+        src = self.people[src_pid]
+        dst = self.people[dst_pid]
+        dst["entries"] += src.get("entries", 0)
+        dst["exits"] += src.get("exits", 0)
+        dst["face_images"].extend(src.get("face_images", []))
+        dst["face_images"] = dst["face_images"][-10:]
+        dst["embeddings"].extend(src.get("embeddings", []))
+        dst["embeddings"] = dst["embeddings"][-5:]
+        dst["color_hist"].extend(src.get("color_hist", []))
+        dst["color_hist"] = dst["color_hist"][-3:]
+        dst["last_seen"] = max(dst.get("last_seen", ""), src.get("last_seen", ""))
+        del self.people[src_pid]
+        self._save()
 
     def _extract_face(self, body_img: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Try to detect face inside body_img. Returns (face_crop, face_embedding) or (None, None)."""
@@ -115,13 +210,10 @@ class PersonDB:
 
     def identify(self, body_crop: np.ndarray, track_id: int) -> int:
         face_crop, face_emb = self._extract_face(body_crop)
-
         display_img = face_crop if face_crop is not None else self._upper_body_crop(body_crop)
 
-        best_id = None
-        best_score = -1
-
         if face_emb is not None:
+            best_id, best_score = None, -1
             for pid, info in self.people.items():
                 for known_emb in info.get("embeddings", []):
                     score = float(face_emb @ known_emb)
@@ -131,9 +223,13 @@ class PersonDB:
             if best_id is not None and best_score >= 0.35:
                 return self._update_person(best_id, display_img, face_emb, body_crop)
 
-        matched_by_hist = self._match_by_hist(body_crop)
-        if matched_by_hist is not None:
-            return self._update_person(matched_by_hist, display_img, face_emb, body_crop)
+        hist_id, hist_score = self._match_by_hist(body_crop)
+        if hist_id is not None and hist_score >= 0.5:
+            return self._update_person(hist_id, display_img, face_emb, body_crop)
+
+        color_id = self._match_by_color(body_crop)
+        if color_id is not None:
+            return self._update_person(color_id, display_img, face_emb, body_crop)
 
         pid = self.next_id
         self.next_id += 1
@@ -146,6 +242,7 @@ class PersonDB:
             "last_seen": time.strftime("%Y-%m-%d %H:%M:%S"),
             "face_images": [],
             "color_hist": [],
+            "dominant_colors": [],
             "ai_description": "",
         }
         self._save_face(pid, display_img, "first")
@@ -170,8 +267,25 @@ class PersonDB:
                 if len(info["embeddings"]) > 5:
                     info["embeddings"] = info["embeddings"][-5:]
         self._update_hist(pid, body_img)
+        self._update_dominant_colors(pid, body_img)
         self._save()
         return pid
+
+    def _update_dominant_colors(self, pid: int, body_img: np.ndarray):
+        colors = self._extract_dominant_colors(body_img)
+        if colors:
+            info = self.people[pid]
+            if "dominant_colors" not in info:
+                info["dominant_colors"] = []
+            if not info["dominant_colors"]:
+                info["dominant_colors"].append(colors)
+            else:
+                last = info["dominant_colors"][-1]
+                avg_dist = sum(min(self._color_distance(c, lc) for lc in last) for c in colors) / len(colors)
+                if avg_dist > 40:
+                    info["dominant_colors"].append(colors)
+                    if len(info["dominant_colors"]) > 3:
+                        info["dominant_colors"] = info["dominant_colors"][-3:]
 
     def _update_hist(self, pid: int, body_img: np.ndarray):
         hist = self._extract_color_hist(body_img)
@@ -196,6 +310,7 @@ class PersonDB:
             "last_seen": time.strftime("%Y-%m-%d %H:%M:%S"),
             "face_images": [],
             "color_hist": [],
+            "dominant_colors": [],
             "ai_description": "",
         }
         self._save()
