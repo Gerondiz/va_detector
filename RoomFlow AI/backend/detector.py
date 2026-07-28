@@ -7,9 +7,9 @@ class Detector:
 
     def detect(self, frame, conf: float = 0.5, iou: float = 0.45, track: bool = True):
         if track:
-            results = self.model.track(frame, persist=True, conf=conf, iou=iou)
+            results = self.model.track(frame, persist=True, conf=conf, iou=iou, verbose=False)
         else:
-            results = self.model(frame, conf=conf, iou=iou)
+            results = self.model(frame, conf=conf, iou=iou, verbose=False)
         return results
 
     def get_objects(self, results) -> list[dict]:

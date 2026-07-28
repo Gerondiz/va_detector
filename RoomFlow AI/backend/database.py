@@ -6,7 +6,8 @@ import cv2
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "data.db")
-FACE_DIR = os.path.join(BASE_DIR, "logs", "faces")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+FACE_DIR = os.path.join(LOG_DIR, "faces")
 
 SETTINGS_CACHE: dict[str, str] = {}
 _SETTINGS_DB_INIT = False
@@ -70,7 +71,8 @@ def init_db():
             gender      TEXT DEFAULT '',
             clothing    TEXT DEFAULT '',
             ai_description TEXT DEFAULT '',
-            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            date        TEXT NOT NULL DEFAULT (date('now'))
         );
 
         CREATE TABLE IF NOT EXISTS events (
@@ -100,6 +102,18 @@ def init_db():
             value TEXT NOT NULL
         );
     """)
+    try:
+        conn.execute("ALTER TABLE persons ADD COLUMN date TEXT NOT NULL DEFAULT (date('now'))")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE events ADD COLUMN entered_count INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE events ADD COLUMN exited_count INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -108,31 +122,26 @@ class PersonDB:
     def __init__(self):
         init_db()
 
-    # --- face / avatar helpers ---
-
-    def _save_img(self, img: np.ndarray, prefix: str) -> str:
-        os.makedirs(FACE_DIR, exist_ok=True)
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        fname = f"{prefix}_{ts}.jpg"
-        path = os.path.join(FACE_DIR, fname)
-        try:
-            cv2.imwrite(path, img)
-        except Exception:
-            return ""
-        return fname
-
     # --- core API (called from pipeline) ---
 
-    def save_entry_event(self, track_oid: int, frame_crop: np.ndarray,
-                         full_frame: np.ndarray, screenshot_fname: str) -> int:
+    def count_events(self, event_type: str) -> int:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM events WHERE type = ?", (event_type,)).fetchone()
+            return row[0] if row else 0
+        finally:
+            conn.close()
+
+    def save_entry_event(self, track_oid: int, crop_fname: str,
+                         screenshot_fname: str,
+                         entered_count: int = 0, exited_count: int = 0) -> int:
         """Save entry event with person_id=NULL. Returns event_id."""
-        crop_fname = self._save_img(frame_crop, f"crop_oid{track_oid}")
         conn = get_conn()
         try:
             cur = conn.execute(
-                """INSERT INTO events (type, screenshot, crop, track_oid)
-                   VALUES ('entered', ?, ?, ?)""",
-                (screenshot_fname, crop_fname, track_oid),
+                """INSERT INTO events (type, screenshot, crop, track_oid, entered_count, exited_count)
+                   VALUES ('entered', ?, ?, ?, ?, ?)""",
+                (screenshot_fname, crop_fname, track_oid, entered_count, exited_count),
             )
             event_id = cur.lastrowid
             conn.commit()
@@ -141,15 +150,18 @@ class PersonDB:
             conn.close()
 
     def save_exit_event(self, track_oid: int, person_id: int | None,
-                        screenshot_fname: str):
+                        screenshot_fname: str, crop_fname: str = "",
+                        entered_count: int = 0, exited_count: int = 0) -> int:
         conn = get_conn()
         try:
-            conn.execute(
-                """INSERT INTO events (person_id, type, screenshot, track_oid)
-                   VALUES (?, 'exited', ?, ?)""",
-                (person_id, screenshot_fname, track_oid),
+            cur = conn.execute(
+                """INSERT INTO events (person_id, type, screenshot, crop, track_oid, entered_count, exited_count)
+                   VALUES (?, 'exited', ?, ?, ?, ?, ?)""",
+                (person_id, screenshot_fname, crop_fname, track_oid, entered_count, exited_count),
             )
+            eid = cur.lastrowid
             conn.commit()
+            return eid
         finally:
             conn.close()
 
@@ -201,8 +213,21 @@ class PersonDB:
                 best_pid = row["id"]
         return best_pid if best_score >= 0.55 else None
 
+    def _save_face_img(self, img: np.ndarray, prefix: str) -> str:
+        date_str = time.strftime("%Y-%m-%d")
+        dir_path = os.path.join(LOG_DIR, date_str, "crops")
+        os.makedirs(dir_path, exist_ok=True)
+        ts = time.strftime("%H%M%S")
+        fname = f"{prefix}_{ts}.jpg"
+        path = os.path.join(dir_path, fname)
+        try:
+            cv2.imwrite(path, img)
+        except Exception:
+            return ""
+        return f"{date_str}/crops/{fname}"
+
     def add_face_image(self, person_id: int, img: np.ndarray, suffix: str = ""):
-        fname = self._save_img(img, f"person_{person_id}_{suffix}" if suffix else f"person_{person_id}")
+        fname = self._save_face_img(img, f"person_{person_id}_{suffix}" if suffix else f"person_{person_id}")
         if not fname:
             return
         conn = get_conn()
@@ -282,10 +307,13 @@ class PersonDB:
         finally:
             conn.close()
 
-    def get_all_persons(self) -> list[dict]:
+    def get_all_persons(self, date_filter: str = "") -> list[dict]:
         conn = get_conn()
         try:
-            rows = conn.execute("SELECT * FROM persons ORDER BY id").fetchall()
+            if date_filter:
+                rows = conn.execute("SELECT * FROM persons WHERE date = ? ORDER BY id", (date_filter,)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM persons ORDER BY id").fetchall()
             result = []
             for row in rows:
                 face_imgs = [
@@ -305,6 +333,7 @@ class PersonDB:
                 result.append({
                     "id": row["id"],
                     "name": row["name"],
+                    "date": row["date"] or row["created_at"][:10],
                     "entries": ent,
                     "exits": ext,
                     "face_images": face_imgs,
@@ -319,6 +348,72 @@ class PersonDB:
         try:
             conn.execute("UPDATE persons SET name = ? WHERE id = ?", (new_name, person_id))
             conn.commit()
+        finally:
+            conn.close()
+
+    def get_event(self, event_id: int) -> dict | None:
+        conn = get_conn()
+        try:
+            r = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            return dict(r) if r else None
+        finally:
+            conn.close()
+
+    def get_unassigned_events(self) -> list[dict]:
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT id, crop FROM events WHERE person_id IS NULL AND type='entered' ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def clear_events(self):
+        conn = get_conn()
+        try:
+            conn.execute("DELETE FROM events")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def reset_persons(self):
+        conn = get_conn()
+        try:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("DELETE FROM face_images")
+            conn.execute("DELETE FROM persons")
+            conn.execute("UPDATE events SET person_id = NULL, ai_description = ''")
+            conn.commit()
+        finally:
+            conn.close()
+
+    def merge_persons(self, keep_id: int, delete_ids: list[int]):
+        conn = get_conn()
+        try:
+            for did in delete_ids:
+                conn.execute("UPDATE events SET person_id = ? WHERE person_id = ?", (keep_id, did))
+                conn.execute("UPDATE face_images SET person_id = ? WHERE person_id = ?", (keep_id, did))
+                conn.execute("DELETE FROM persons WHERE id = ?", (did,))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_all_persons_for_dedup(self) -> list[dict]:
+        conn = get_conn()
+        try:
+            rows = conn.execute("SELECT id, name, ai_description FROM persons ORDER BY id").fetchall()
+            result = []
+            for r in rows:
+                faces = conn.execute(
+                    "SELECT filename FROM face_images WHERE person_id = ? ORDER BY id",
+                    (r["id"],),
+                ).fetchall()
+                result.append({
+                    "id": r["id"],
+                    "name": r["name"],
+                    "ai_description": r["ai_description"] or "",
+                    "face_images": [f["filename"] for f in faces],
+                })
+            return result
         finally:
             conn.close()
 

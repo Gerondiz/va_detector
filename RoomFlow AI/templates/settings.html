@@ -15,6 +15,15 @@
         <div style="display:flex; gap:8px">
             <input name="llm_url" id="llm_url" value="{{ llm_url }}">
             <button type="button" onclick="saveSetting('llm_url')" style="padding:10px 16px;white-space:nowrap">Save</button>
+            <button type="button" onclick="checkLLM()" style="padding:10px 16px;white-space:nowrap">Check</button>
+        </div>
+        <div id="llm-status" style="margin-top:8px;font-size:13px;font-weight:600"
+             class="{% if llm_status.ok %}status-ok{% else %}status-err{% endif %}">
+          {% if llm_status.ok %}
+            ✓ Server reachable — {{ llm_status.models|length }} models: {{ llm_status.models|join(', ') }}
+          {% else %}
+            ✗ {{ llm_status.error }}
+          {% endif %}
         </div>
         <label>Vision Model</label>
         <div style="display:flex; gap:8px">
@@ -66,11 +75,23 @@
             <button type="button" onclick="resetCounters()" style="background:#d32f2f">Reset</button>
         </div>
 
+        <hr style="border-color:#2a3a4e;margin:20px 0">
+        <label>Persons</label>
+        <div style="display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap:wrap">
+            <button type="button" onclick="resetPersons()" style="background:#d32f2f">Reset Persons</button>
+            <button type="button" onclick="dedupPersons()">Verify / Dedup</button>
+            <span id="persons-status" style="font-size:13px;color:#8a9bb5"></span>
+        </div>
+
         <div style="margin-top:20px">
             <button type="button" onclick="window.location.href='/'">Back to Dashboard</button>
         </div>
     </form>
 </div>
+<style>
+.status-ok { color: #4caf50; }
+.status-err { color: #f44336; }
+</style>
 <script>
 function updateDoor() {
     var l = parseFloat(document.getElementById('door-left-val').textContent);
@@ -115,6 +136,52 @@ function resetCounters() {
         if (d.ok) {
             document.getElementById('cnt-entered').textContent = '0';
             document.getElementById('cnt-exited').textContent = '0';
+        }
+    });
+}
+function resetPersons() {
+    if (!confirm('Delete ALL persons and reassign events? Screenshots and crops will NOT be deleted.')) return;
+    var st = document.getElementById('persons-status');
+    st.textContent = 'Resetting...';
+    fetch('/api/reset_persons', {method: 'POST'}).then(r=>r.json()).then(d=>{
+        if (d.ok) {
+            st.textContent = 'Persons cleared. Entry crops will be re-processed by AI.';
+        } else {
+            st.textContent = 'Error: ' + (d.reason || 'unknown');
+        }
+    });
+}
+function checkLLM() {
+    const url = document.getElementById('llm_url').value;
+    const st = document.getElementById('llm-status');
+    st.textContent = 'Checking...';
+    st.className = '';
+    fetch('/api/check_llm', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: url})
+    }).then(r=>r.json()).then(d=>{
+        if (d.ok) {
+            st.className = 'status-ok';
+            st.textContent = '✓ Server reachable — ' + d.models.length + ' models: ' + d.models.join(', ');
+        } else {
+            st.className = 'status-err';
+            st.textContent = '✗ ' + d.error;
+        }
+    });
+}
+function dedupPersons() {
+    var st = document.getElementById('persons-status');
+    st.textContent = 'Analyzing... (may take ~30s)';
+    fetch('/api/dedup_persons', {method: 'POST'}).then(r=>r.json()).then(d=>{
+        if (!d.ok) {
+            st.textContent = d.reason || 'Error';
+            return;
+        }
+        if (d.merged > 0) {
+            st.textContent = 'Merged ' + d.merged + ' duplicate(s): ' + JSON.stringify(d.groups);
+        } else {
+            st.textContent = 'No duplicates found.';
         }
     });
 }

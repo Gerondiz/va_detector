@@ -8,18 +8,28 @@
     </div>
 </div>
 <div class="card" style="margin-bottom:20px">
-    <strong>Known People</strong>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+        <strong>Known People</strong>
+        <select id="person-date-filter" onchange="loadPeople()" style="background:#0f1218;color:#e0e0e0;border:1px solid #2a3040;padding:6px 10px;border-radius:6px;font-size:13px">
+            <option value="">All dates</option>
+        </select>
+    </div>
     <div style="margin-top:10px">
         <table>
-            <thead><tr><th>Name</th><th>Entries</th><th>Exits</th><th>Action</th></tr></thead>
+            <thead><tr><th>Name</th><th>Date</th><th>Entries</th><th>Exits</th><th>Action</th></tr></thead>
             <tbody id="people-table"></tbody>
         </table>
     </div>
 </div>
 <div class="card">
-    <div style="display:flex; justify-content:space-between; margin-bottom:15px">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:8px">
         <strong>Screenshots</strong>
-        <button onclick="loadScreenshots()">Refresh</button>
+        <div style="display:flex; gap:8px; align-items:center">
+            <select id="screenshot-date-filter" onchange="loadScreenshots()" style="background:#0f1218;color:#e0e0e0;border:1px solid #2a3040;padding:6px 10px;border-radius:6px;font-size:13px">
+                <option value="">All dates</option>
+            </select>
+            <button onclick="loadScreenshots()">Refresh</button>
+        </div>
     </div>
     <div class="screenshots" id="screenshots"></div>
 </div>
@@ -28,7 +38,17 @@
 </div>
 <script>
 function loadPeople() {
-    fetch('/api/people').then(r=>r.json()).then(d=>{
+    const dateFilter = document.getElementById('person-date-filter').value;
+    const url = '/api/people' + (dateFilter ? '?date=' + dateFilter : '');
+    fetch(url).then(r=>r.json()).then(d=>{
+        const dates = new Set();
+        d.people.forEach(p => dates.add((p.date || '?').slice(0,10)));
+        const sel = document.getElementById('person-date-filter');
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">All dates</option>' +
+            Array.from(dates).sort().reverse().map(d =>
+                '<option value="' + d + '"' + (d === cur ? ' selected' : '') + '>' + d + '</option>'
+            ).join('');
         const tbody = document.getElementById('people-table');
         tbody.innerHTML = d.people.map(p => {
             const faceImg = p.face_images && p.face_images.length > 0
@@ -36,6 +56,7 @@ function loadPeople() {
                 : '';
             return '<tr>' +
                 '<td>' + faceImg + '<a href="/people/' + p.id + '" class="person-name" data-id="' + p.id + '">' + p.name + '</a></td>' +
+                '<td style="color:#8a9bb5;font-size:12px">' + (p.date || '-').slice(0,10) + '</td>' +
                 '<td>' + p.entries + '</td>' +
                 '<td>' + p.exits + '</td>' +
                 '<td><button onclick="renamePerson(' + p.id + ')" style="font-size:12px;padding:2px 8px">Rename</button></td>' +
@@ -64,10 +85,27 @@ function loadData() {
 }
 function loadScreenshots() {
     fetch('/api/screenshots').then(r=>r.json()).then(files=>{
+        const filterVal = document.getElementById('screenshot-date-filter').value;
+        const dates = new Set();
+        const filtered = files.filter(f => {
+            if (!f.includes('person_')) return false;
+            if (f.startsWith('faces/')) return false;
+            const parts = f.split('/');
+            if (parts.length > 1 && /^\d{4}-\d{2}-\d{2}$/.test(parts[0])) dates.add(parts[0]);
+            else dates.add('(other)');
+            if (!filterVal) return true;
+            return f.startsWith(filterVal + '/');
+        });
+        const sel = document.getElementById('screenshot-date-filter');
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">All dates</option>' +
+            Array.from(dates).sort().reverse().map(d =>
+                '<option value="' + d + '"' + (d === cur ? ' selected' : '') + '>' + d + '</option>'
+            ).join('');
         const container = document.getElementById('screenshots');
-        container.innerHTML = files.filter(f => f.includes('person_')).map(f =>
+        container.innerHTML = filtered.map(f =>
             '<img src="/screenshots/' + f + '" onclick="document.getElementById(\'modal-img\').src=\'/screenshots/' + f + '\';document.getElementById(\'modal\').classList.add(\'show\')">'
-        ).join('');
+        ).join('') || '<span style="color:#8a9bb5;font-size:13px">No screenshots</span>';
     });
 }
 loadData();
