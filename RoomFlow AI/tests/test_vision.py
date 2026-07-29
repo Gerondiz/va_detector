@@ -15,27 +15,33 @@ if not img_path or not os.path.exists(img_path):
 
 with open(img_path, "rb") as f:
     b64 = base64.b64encode(f.read()).decode()
+data_url = f"data:image/jpeg;base64,{b64}"
 
 url = get_setting("llm_url", MODELS["llm"]["base_url"])
-model = MODELS["llm"]["model"]
-print(f"URL:   {url}")
-print(f"Model: {model}")
-print(f"Image: {img_path}")
+print(f"URL:  {url}")
+print(f"Img:  {img_path}")
 
-resp = requests.post(
-    f"{url}/chat/completions",
-    json={
-        "model": model,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Describe this person briefly in 1 sentence."},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ],
-        }],
-        "max_tokens": 100,
-    },
-    timeout=60,
-)
-print(f"\nStatus: {resp.status_code}")
-print(f"Response:\n{json.dumps(resp.json(), indent=2, ensure_ascii=False)}")
+# Test 1 — moondream (vision)
+vm = get_setting("vision_model", "moondream:latest")
+print(f"\n--- moondream ({vm}) ---")
+r1 = requests.post(f"{url}/chat/completions", json={
+    "model": vm,
+    "messages": [{"role":"user","content":[
+        {"type":"text","text":"Describe this person briefly in 1 sentence."},
+        {"type":"image_url","image_url":{"url":data_url}},
+    ]}],
+    "max_tokens": 200,
+}, timeout=60)
+t1 = r1.json()["choices"][0]["message"]["content"].strip()
+print(f"Status: {r1.status_code}, response: {t1[:200]}")
+
+# Test 2 — gemma4 (text only, no image)
+lm = MODELS["llm"]["model"]
+print(f"\n--- gemma4 ({lm}) ---")
+r2 = requests.post(f"{url}/chat/completions", json={
+    "model": lm,
+    "messages": [{"role":"user","content":f'A person was described as: "{t1}". Does this match ID 1 described as "tall man in blue jacket"? Return JSON {{"person_id": <int>}}'}],
+    "max_tokens": 100,
+}, timeout=30)
+print(f"Status: {r2.status_code}")
+print(f"Response:\n{json.dumps(r2.json(), indent=2, ensure_ascii=False)[:500]}")

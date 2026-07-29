@@ -13,14 +13,13 @@ CAMERA = {
 
 MODELS = {
     "yolo": "yolov8n.pt",
-    "whisper": "base",
     "llm": {
         "provider": "ollama",
-        "base_url": "http://127.0.0.1:11434/v1",
-        "model": "gemma4:latest",
+        "base_url": "http://20.0.0.153:1234",
+        "model": "gemma4:e4b", 
     },
     "vision": {
-        "model": "moondream:latest",
+        "model": "gemma4:e4b",  # Теперь Gemma отвечает и за зрение
     },
 }
 
