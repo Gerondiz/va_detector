@@ -174,7 +174,7 @@ class PersonDB:
             conn.close()
 
     def resolve_event(self, event_id: int, ai_description: str) -> int:
-        """Create a new person and assign the event. Returns person_id."""
+        """Создает новую персону и связывает событие. Исправлено: сохраняет ПОЛНОЕ описание одежды."""
         conn = get_conn()
         try:
             event = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
@@ -182,15 +182,20 @@ class PersonDB:
                 return 0
             if event["person_id"] is not None:
                 return event["person_id"]
-
+                
+            # ИСПРАВЛЕНО: Убрана обрезка [:200] и мусорный префикс 'Person — '
+            clean_desc = ai_description.strip() if ai_description else ""
+            
             cur = conn.execute(
                 "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
-                (f"Person", f"Person — {ai_description[:200]}" if ai_description else ""),
+                ("Person", clean_desc),
             )
             pid = cur.lastrowid
+            
+            # Обновляем имя и связываем событие
             conn.execute("UPDATE persons SET name = ? WHERE id = ?", (f"Person {pid}", pid))
             conn.execute("UPDATE events SET person_id = ?, ai_description = ? WHERE id = ?",
-                         (pid, ai_description, event_id))
+                         (pid, clean_desc, event_id))
             conn.commit()
             return pid
         finally:
@@ -251,21 +256,23 @@ class PersonDB:
             conn.close()
 
     def create_person_and_assign(self, event_id: int, ai_description: str) -> int:
+        """Дублирующий метод для сервера. Тоже убираем ограничения."""
         conn = get_conn()
         try:
             event = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
             if event is None or event["person_id"] is not None:
-                conn.close()
                 return event["person_id"] if event else 0
-
+                
+            clean_desc = ai_description.strip() if ai_description else ""
+            
             cur = conn.execute(
                 "INSERT INTO persons (name, ai_description) VALUES (?, ?)",
-                (f"Person", f"Person — {ai_description[:200]}" if ai_description else ""),
+                ("Person", clean_desc),
             )
             pid = cur.lastrowid
             conn.execute("UPDATE persons SET name = ? WHERE id = ?", (f"Person {pid}", pid))
             conn.execute("UPDATE events SET person_id = ?, ai_description = ? WHERE id = ?",
-                         (pid, ai_description, event_id))
+                         (pid, clean_desc, event_id))
             conn.commit()
             return pid
         finally:
