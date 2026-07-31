@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid grid-2">
+    <div class="vid-wrap">
+        <img src="/video" id="live-video" alt="Live">
+    </div>
+    <div class="flex" style="flex-direction:column; gap:20px">
+        <div class="card">
+            <div class="grid grid-4">
+                <div class="stat car">
+                    <div class="number" id="car-total">0</div>
+                    <div class="label">Cars</div>
+                    <div class="sub">← <span id="car-left">0</span> · <span id="car-right">0</span> →</div>
+                </div>
+                <div class="stat bus">
+                    <div class="number" id="bus-total">0</div>
+                    <div class="label">Buses</div>
+                    <div class="sub">← <span id="bus-left">0</span> · <span id="bus-right">0</span> →</div>
+                </div>
+                <div class="stat truck">
+                    <div class="number" id="truck-total">0</div>
+                    <div class="label">Trucks</div>
+                    <div class="sub">← <span id="truck-left">0</span> · <span id="truck-right">0</span> →</div>
+                </div>
+                <div class="stat moto">
+                    <div class="number" id="moto-total">0</div>
+                    <div class="label">Motorcycles</div>
+                    <div class="sub">← <span id="moto-left">0</span> · <span id="moto-right">0</span> →</div>
+                </div>
+            </div>
+        </div>
+        <div class="card" style="flex:1; min-height:0">
+            <div style="display:flex; justify-content:space-between; margin-bottom:10px">
+                <strong>Recent Passes</strong>
+                <span id="fps" style="color:#8a9bb5;font-size:12px">FPS: 0</span>
+            </div>
+            <div class="events-box" id="events-box"></div>
+        </div>
+    </div>
+</div>
+<script>
+function update() {
+    fetch('/api/status').then(r=>r.json()).then(d=>{
+        document.getElementById('car-left').textContent = d.car_left;
+        document.getElementById('car-right').textContent = d.car_right;
+        document.getElementById('car-total').textContent = d.car_left + d.car_right;
+        document.getElementById('bus-left').textContent = d.bus_left;
+        document.getElementById('bus-right').textContent = d.bus_right;
+        document.getElementById('bus-total').textContent = d.bus_left + d.bus_right;
+        document.getElementById('truck-left').textContent = d.truck_left;
+        document.getElementById('truck-right').textContent = d.truck_right;
+        document.getElementById('truck-total').textContent = d.truck_left + d.truck_right;
+        document.getElementById('moto-left').textContent = d.moto_left;
+        document.getElementById('moto-right').textContent = d.moto_right;
+        document.getElementById('moto-total').textContent = d.moto_left + d.moto_right;
+        document.getElementById('fps').textContent = 'FPS: ' + d.fps;
+    });
+    fetch('/api/events').then(r=>r.json()).then(events=>{
+        const box = document.getElementById('events-box');
+        const wasAtTop = box.scrollTop <= 10;
+        box.innerHTML = events.map(e => {
+            const img = e.screenshot
+                ? '<img src="/screenshots/' + e.screenshot + '" onclick="window.open(\'/screenshots/' + e.screenshot + '\')">'
+                : '';
+            const dir = e.direction === 'left' ? '←' : '→';
+            return '<div>' + img + '<span class="badge ' + e.direction + '">' + dir + ' ' + e.vehicle_class + '</span> ' + e.timestamp + '</div>';
+        }).join('');
+        if (wasAtTop) box.scrollTop = 0;
+    });
+}
+setInterval(update, 1000);
+update();
+</script>
+{% endblock %}

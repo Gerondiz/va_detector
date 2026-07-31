@@ -10,6 +10,9 @@ settings.json.migrated
 data.db
 data.db-wal
 data.db-shm
+traffic_data.db
+traffic_data.db-wal
+traffic_data.db-shm
 
 *.pt
 

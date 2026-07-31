@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card" style="max-width:500px">
+    <strong>Settings</strong>
+    <form style="margin-top:15px">
+        <label>Line Position</label>
+        <div style="display:flex; align-items:center; gap:12px">
+            <input name="line_position" id="line_position" value="{{ line_position }}" step="0.01" type="range" min="0" max="1"
+                   oninput="updateLine(this.value)" style="flex:1">
+            <span id="line-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ line_position }}</span>
+        </div>
+        <div style="font-size:12px;color:#8a9bb5;margin-top:4px">0 = left/top · 1 = right/bottom</div>
+
+        <label style="margin-top:12px">Line Orientation</label>
+        <select id="line_horizontal" onchange="setOrientation()">
+            <option value="false" {{ 'selected' if not line_horizontal else '' }}>Vertical</option>
+            <option value="true" {{ 'selected' if line_horizontal else '' }}>Horizontal</option>
+        </select>
+
+        <label style="margin-top:12px">Detection Confidence</label>
+        <div style="display:flex; align-items:center; gap:12px">
+            <input name="confidence" id="confidence" value="{{ confidence }}" step="0.05" type="range" min="0.3" max="0.9"
+                   oninput="updateConfidence(this.value)" style="flex:1">
+            <span id="conf-val" style="color:#4fc3f7;font-weight:600;min-width:40px">{{ confidence }}</span>
+        </div>
+
+        <label style="margin-top:12px">Camera URL</label>
+        <div style="display:flex; gap:8px">
+            <input name="camera_url" id="camera_url" value="{{ camera_url }}"
+                   style="flex:1; font-size:13px; padding:8px">
+            <button type="button" onclick="setCameraUrl()" style="padding:6px 16px; background:#1565c0">Apply</button>
+        </div>
+        <div style="font-size:12px;color:#8a9bb5;margin-top:4px">MJPEG/RTSP-адрес камеры</div>
+
+        <hr style="border-color:#2a3a4e;margin:20px 0">
+
+        <label>Counters</label>
+        <div style="display:flex; gap:12px; align-items:center; margin-top:8px">
+            <button type="button" onclick="resetCounters()" style="background:#d32f2f">Reset All</button>
+        </div>
+    </form>
+</div>
+<script>
+function updateLine(val) {
+    document.getElementById('line-val').textContent = parseFloat(val).toFixed(2);
+    fetch('/api/set_line', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({line_position: parseFloat(val), line_horizontal: document.getElementById('line_horizontal').value === 'true'})
+    });
+}
+function setOrientation() {
+    const val = document.getElementById('line_horizontal').value === 'true';
+    fetch('/api/set_line', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({line_position: parseFloat(document.getElementById('line_position').value), line_horizontal: val})
+    });
+}
+function updateConfidence(val) {
+    document.getElementById('conf-val').textContent = parseFloat(val).toFixed(2);
+    fetch('/api/set_setting', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: 'confidence', value: val})
+    });
+}
+function setCameraUrl() {
+    const val = document.getElementById('camera_url').value.trim();
+    if (!val) return;
+    fetch('/api/set_setting', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: 'camera_url', value: val})
+    }).then(r => r.json()).then(() => {
+        document.getElementById('camera_url').style.borderColor = '#4caf50';
+        setTimeout(() => location.reload(), 2000);
+    });
+}
+function resetCounters() {
+    if (!confirm('Reset all counters to 0?')) return;
+    fetch('/api/reset', {method: 'POST'}).then(() => location.reload());
+}
+</script>
+{% endblock %}
